@@ -92,34 +92,52 @@ BITS_ROTATION_TABLE = (1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 1)
 # fmt:on
 
 
-def perm(block: bytes, rule: tuple[int, ...]) -> bytes:
-    return bytes(block[pos - 1] for pos in rule)
+def permute_block(value: int, rule: tuple[int, ...], size: int) -> int:
+    return sum(((value >> size - p) & 1) << i for i, p in enumerate(reversed(rule)))
 
 
-def des_fun(data: bytes, key: bytes) -> bytes:
-    data = perm(data, EXPANSION_FUNCTION)
-    data = bytes(a ^ b for a, b in zip(data, key))
-    for i in range(8):
-        pass
-    data = perm(data, PERMUTATION)
-    return data
-
-
-def des_block(block: bytes) -> bytes:
-    block += b'\x00' * (8 - len(block))
-
-    block = perm(block, INITIAL_PERMUTATION)
-    for _ in range(16):
-        block = block[4:] + des_fun(block[:4], b'\x00' * 3)
-
-    block = perm(block, FINAL_PERMUTATION)
+def des_fun(block: int, key: int) -> int:
+    block = permute_block(block, EXPANSION_FUNCTION, 32)  # 48
+    block ^= key
+    block = sum(
+        SUBSTITUTION_BOXES[
+            (7 - i) * 64
+            + (((block >> i * 6 + 4) & 2) | ((block >> i * 6) & 1)) * 16
+            + ((block >> i * 6 + 1) & 0b1111)
+        ]
+        << i * 4
+        for i in range(8)
+    )
+    block = permute_block(block, PERMUTATION, 32)  # 32
     return block
 
 
-def des(data: bytes, key: bytes) -> bytes:
+def des_block(block_b: bytes, key: int) -> bytes:
+    block_b += b'\x00' * (8 - len(block_b))
+    block = int.from_bytes(block_b)
+    block = permute_block(block, INITIAL_PERMUTATION, 64)  # 64
+
+    cd_vector = permute_block(key, PERMUTED_CHOICE_1, 64)  # 56
+    for round in range(16):
+        for _ in range(BITS_ROTATION_TABLE[round]):
+            cd_vector <<= 1
+            overflow_bits = (cd_vector >> 28) & (1 << 28 | 1)
+            cd_vector &= ~(1 << 56 | 1 << 28 | 1)
+            cd_vector |= overflow_bits
+
+        round_key = permute_block(cd_vector, PERMUTED_CHOICE_2, 56)  # 48
+        right = block & 0xFFFFFFFF
+        block = (right << 32) | ((block >> 32) ^ des_fun(right, round_key))
+
+    block = ((block & 0xFFFFFFFF) << 32) | (block >> 32)
+
+    block = permute_block(block, FINAL_PERMUTATION, 64)  # 64
+    block_b = block.to_bytes(8)
+    return block_b
+
+
+def des(data: bytes, key: int) -> bytes:
     return b''.join(
-        des_block(data[i * 8 : (i + 1) * 8]) for i in range(((len(data) - 1) // 8) + 1)
+        des_block(data[i * 8 : (i + 1) * 8], key)
+        for i in range(((len(data) - 1) // 8) + 1)
     )
-
-
-print(des('aboba'.encode(), key=b''))
