@@ -1,13 +1,13 @@
 WIRING = {
-    'I': b'EKMFLGDQVZNTOWYHXUSPAIBRCJ',
-    'II': b'AJDKSIRUXBLHWTMCQGZNPYFVOE',
-    'III': b'BDFHJLCPRTXVZNYEIWGAKMUSQO',
-    'IV': b'ESOVPZJAYQUIRHXLNFTGKDCMWB',
-    'V': b'VZBRGITYUPSDNHLXAWMJQOFECK',
-    'UKW-A': b'EJMZALYXVBWFCRQUONTSPIKHGD',
-    'UKW-B': b'YRUHQSLDPXNGOKMIEBFZCWVJAT',
-    'UKW-C': b'FVPJIAOYEDRZXWGCTKUQSBNMHL',
-    'ETW': b'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    'I': 'EKMFLGDQVZNTOWYHXUSPAIBRCJ',
+    'II': 'AJDKSIRUXBLHWTMCQGZNPYFVOE',
+    'III': 'BDFHJLCPRTXVZNYEIWGAKMUSQO',
+    'IV': 'ESOVPZJAYQUIRHXLNFTGKDCMWB',
+    'V': 'VZBRGITYUPSDNHLXAWMJQOFECK',
+    'UKW-A': 'EJMZALYXVBWFCRQUONTSPIKHGD',
+    'UKW-B': 'YRUHQSLDPXNGOKMIEBFZCWVJAT',
+    'UKW-C': 'FVPJIAOYEDRZXWGCTKUQSBNMHL',
+    'ETW': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
 }
 NOTCH = {'I': 'Q', 'II': 'E', 'III': 'V', 'IV': 'J', 'V': 'Z'}
 ORD_A = ord('A')
@@ -17,8 +17,12 @@ def char2pos(char: str) -> int:
     return ord(char) - ORD_A
 
 
+def pos2char(pos: int) -> str:
+    return chr(pos + ORD_A)
+
+
 def wiring2perm(name: str) -> tuple[int, ...]:
-    return tuple(ch - ORD_A - i for i, ch in enumerate(WIRING[name]))
+    return tuple(char2pos(ch) - i for i, ch in enumerate(WIRING[name]))
 
 
 def steckerverbindungen2perm(pairs: list[str]) -> tuple[int, ...]:
@@ -76,8 +80,9 @@ class Enigma:
             if not rotor.rotate():
                 break
 
-    def round(self, pos: int) -> int:
+    def round(self, char: str) -> str:
         self.rotate()
+        pos = char2pos(char)
         pos = self.plugboard.transmute(pos)
         for rotor in reversed(self.rotors):
             pos = rotor.transmute(pos)
@@ -85,10 +90,8 @@ class Enigma:
         for rotor in self.rotors:
             pos = rotor.transmute(pos, reverse=True)
         pos = self.plugboard.transmute(pos)
-        return pos
+        char = pos2char(pos)
+        return char
 
     def transmute_text(self, text: str) -> str:
-        return bytes(
-            self.round(ch - ORD_A) + ORD_A if ch in self.alphabet else ch
-            for ch in text.encode()
-        ).decode()
+        return ''.join(self.round(ch) if ch in self.alphabet else ch for ch in text)
