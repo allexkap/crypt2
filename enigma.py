@@ -74,6 +74,7 @@ class Enigma:
         self.reflector = Rotor(wiring2perm(reflector), 0, 0, 0)
         self.plugboard = Rotor(steckerverbindungen2perm(plugboard), 0, 0, 0)
         self.alphabet = set(WIRING['ETW'])
+        self.trace = []
 
     def rotate(self) -> None:
         for rotor in reversed(self.rotors):
@@ -82,16 +83,26 @@ class Enigma:
 
     def round(self, char: str) -> str:
         self.rotate()
+        self.trace.clear()
         pos = char2pos(char)
+        self.trace.append(pos)
         pos = self.plugboard.transmute(pos)
+        self.trace.append(pos)
         for rotor in reversed(self.rotors):
             pos = rotor.transmute(pos)
+            self.trace.append(pos)
         pos = self.reflector.transmute(pos)
+        self.trace.append(pos)
         for rotor in self.rotors:
             pos = rotor.transmute(pos, reverse=True)
+            self.trace.append(pos)
         pos = self.plugboard.transmute(pos)
+        self.trace.append(pos)
         char = pos2char(pos)
         return char
 
     def transmute_text(self, text: str) -> str:
         return ''.join(self.round(ch) if ch in self.alphabet else ch for ch in text)
+
+    def get_trace(self):
+        return ' -> '.join(map(pos2char, self.trace))

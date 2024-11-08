@@ -11,17 +11,23 @@ enigma = Enigma(
     plugboard=['AM', 'FI', 'NV', 'PS', 'TU', 'WZ'],
 )
 
+verbose = len(sys.argv) - 1
+
 fd = sys.stdin.fileno()
 old_settings = termios.tcgetattr(fd)
 settings = termios.tcgetattr(fd)
 settings[3] &= ~(termios.ECHO | termios.ICANON)
 try:
-    print('> ', end='', flush=True)
     termios.tcsetattr(fd, termios.TCSADRAIN, settings)
     while (ch := sys.stdin.read(1).upper()) != '\x04':
-        print(enigma.transmute_text(ch), end='', flush=True)
+        ch = enigma.transmute_text(ch)
+        if verbose:
+            print(enigma.get_trace())
+        else:
+            print(ch, end='', flush=True)
 except KeyboardInterrupt:
     pass
 finally:
-    print()
+    if not verbose:
+        print()
     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
