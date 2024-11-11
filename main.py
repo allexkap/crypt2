@@ -21,7 +21,7 @@ print('\nEnigma:', repr(enc_text.lower()))
 src_data = text.encode()
 enc_data = des(src_data, 0x133457799BBCDFF1)
 dec_data = des(enc_data, 0x133457799BBCDFF1, True)
-assert src_data == dec_data[: len(src_data)]
+assert src_data == dec_data
 print('\nDES:', enc_data.hex())
 
 src_data = text.encode()

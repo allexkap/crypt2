@@ -112,7 +112,7 @@ def des_fun(block: int, key: int) -> int:
     return block
 
 
-def create_subkeys(key: int):
+def create_round_keys(key: int):
     cd_vector = permute_block(key, PERMUTED_CHOICE_1, 64)  # 56
     for round in range(16):
         for _ in range(BITS_ROTATION_TABLE[round]):
@@ -123,28 +123,30 @@ def create_subkeys(key: int):
         yield permute_block(cd_vector, PERMUTED_CHOICE_2, 56)  # 48
 
 
-def des_block(block_b: bytes, key: int, reverse: bool) -> bytes:
-    block_b += b'\x00' * (8 - len(block_b))
+def des_block(block_b: bytes, round_keys: list[int]) -> bytes:
     block = int.from_bytes(block_b)
+
     block = permute_block(block, INITIAL_PERMUTATION, 64)  # 64
 
-    subkeys = create_subkeys(key)
-    if reverse:
-        subkeys = reversed([*subkeys])
-
-    for subkey in subkeys:
+    for key in round_keys:
         right = block & 0xFFFFFFFF
-        block = (right << 32) | ((block >> 32) ^ des_fun(right, subkey))
-
+        block = (right << 32) | ((block >> 32) ^ des_fun(right, key))
     block = ((block & 0xFFFFFFFF) << 32) | (block >> 32)
 
     block = permute_block(block, FINAL_PERMUTATION, 64)  # 64
+
     block_b = block.to_bytes(8)
     return block_b
 
 
-def des(data: bytes, key: int, reverse=False) -> bytes:
-    return b''.join(
-        des_block(data[i * 8 : (i + 1) * 8], key, reverse)
-        for i in range(-(-len(data) // 8))
-    )
+def des(data: bytes, key: int, decrypt=False) -> bytes:
+    n = len(data) // 8 + (0 if decrypt else 1)
+    blocks = [data[i * 8 : (i + 1) * 8] for i in range(n)]
+    if not decrypt:
+        padding_size = 8 - len(blocks[-1])
+        blocks[-1] += padding_size.to_bytes() * padding_size
+    round_keys = list(create_round_keys(key))[:: (-1) ** decrypt]
+    blocks = [des_block(block, round_keys) for block in blocks]
+    if decrypt:
+        blocks[-1] = blocks[-1][: -blocks[-1][-1]]
+    return b''.join(blocks)
