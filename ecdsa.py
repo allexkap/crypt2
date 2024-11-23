@@ -1,4 +1,5 @@
 import secrets
+from typing import Any
 
 
 class Point:
@@ -39,8 +40,11 @@ class Point:
         half = self * (n // 2)
         return half + half + self if n % 2 else half + half
 
-    def __str__(self) -> str:
-        return f'({self.x}, {self.y})'
+    def __eq__(self, rhs: 'Point') -> bool:
+        return self.x == rhs.x and self.y == rhs.y and self.curve == rhs.curve
+
+    def __repr__(self) -> str:
+        return f'Point(x={self.x}, y={self.y}, curve={repr(self.curve)})'
 
 
 class Curve:
@@ -52,63 +56,109 @@ class Curve:
     def __call__(self, x: int, y: int) -> Point:
         return Point(x, y, self)
 
-    def from_compressed_form(self, key: str) -> Point:
-        x = int.from_bytes(bytes.fromhex(key[2:]))
-        y = pow(x**3 + self.a * x + self.b, (self.p + 1) // 4, self.p)
-        if y % 2 != ('02', '04').index(key[:2]):
-            y = self.p - y
-        return self(x, y)
+    def __repr__(self) -> str:
+        return f'Curve(a={self.a}, b={self.b}, p={self.p})'
 
 
-secp256k1 = (
-    Curve(
+class secp256k1:
+    curve = Curve(
         a=0x0000000000000000000000000000000000000000000000000000000000000000,
         b=0x0000000000000000000000000000000000000000000000000000000000000007,
         p=0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F,
-    )(
+    )
+    g_point = curve(
         x=0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
         y=0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8,
-    ),
-    0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141,
-)
+    )
+    n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+
+    @staticmethod
+    def point_to_str(point: Point, compressed=True) -> str:
+        prefix = ('03' if point.y % 2 else '02') if compressed else '04'
+        ypart = '' if compressed else f'{point.y:032x}'
+        xpart = f'{point.x:032x}'
+        return f'{prefix}{xpart}{ypart}'
+
+    @staticmethod
+    def point_from_str(text: str) -> Point:
+        curve = secp256k1.curve
+        prefix = text[:2]
+        x = int(text[2:66], 16)
+        if prefix == '04':
+            y = int(text[66:], 16)
+        elif prefix in ('02', '03'):
+            y = pow(x**3 + curve.a * x + curve.b, (curve.p + 1) // 4, curve.p)
+            if (y % 2) ^ (prefix != '02'):
+                y = curve.p - y
+        else:
+            raise ValueError
+        return curve(x, y)
 
 
-def ecdsa_keygen(
-    private_key: int | None = None, domain_params=secp256k1
-) -> tuple[int, tuple[int, int]]:
-    g_point, n = domain_params
+def to_der_format(obj: Any) -> tuple[str, int]:
+    match obj:
+        case int(value):
+            prefix = '02'
+            size = -(-value.bit_length() // 8)
+            text = f'{value:0{size*2}x}'
+        case tuple(items):
+            prefix = '30'
+            text_parts, sizes = zip(*map(to_der_format, items))
+            size = sum(sizes)  # type: ignore
+            text = ''.join(text_parts)  # type: ignore
+        case obj:
+            raise ValueError(f'Unknown type {obj.__class__}')
+    return f'{prefix}{size:02x}{text}', size + 2
 
+
+def parse_der_seq(text: str):
+    while text:
+        value, size = from_der_format(text)
+        text = text[size:]
+        yield value
+
+
+def from_der_format(text: str) -> tuple[Any, int]:
+    size = (int(text[2:4], 16) + 2) * 2
+    match text[:2]:
+        case '02':  # INTEGER
+            value = int(text[4:size], 16)
+        case '30':  # SEQUENCE
+            value = tuple(parse_der_seq(text[4:size]))
+        case prefix:
+            raise ValueError(f'Unknown type 0x{prefix}')
+    return value, size
+
+
+def ecdsa_keygen(private_key: int | None = None, params=secp256k1) -> tuple[int, str]:
     if private_key is None:
-        private_key = secrets.randbelow(n - 1) + 1
-    public_key = g_point * private_key
+        private_key = secrets.randbelow(params.n - 1) + 1
+    public_key = params.g_point * private_key
 
-    return private_key, (public_key.x, public_key.y)
+    return private_key, params.point_to_str(public_key)
 
 
-def ecdsa_sign(msg: int, private_key: int, domain_params=secp256k1) -> tuple[int, int]:
-    g_point, n = domain_params
+def ecdsa_sign(msg: int, private_key: int, params=secp256k1) -> str:
+    k = secrets.randbelow(params.n - 1) + 1
+    r_point = params.g_point * k
+    r = r_point.x % params.n
 
-    k = secrets.randbelow(n - 1) + 1
-    r_point = g_point * k
-    r = r_point.x % n
-
-    s = ((msg + r * private_key) * pow(k, -1, n)) % n
+    s = ((msg + r * private_key) * pow(k, -1, params.n)) % params.n
     assert r != 0 and s != 0, 'ne povezlo'
-    return r, s
+
+    return to_der_format((r, s))[0]
 
 
-def ecdsa_verify(
-    msg: int,
-    sign: tuple[int, int],
-    public_key: tuple[int, int],
-    domain_params=secp256k1,
-) -> bool:
-    g_point, n = domain_params
-    public_key_point = g_point.curve(*public_key)
-    r, s = sign
+def ecdsa_verify(msg: int, sign: str, public_key: str, params=secp256k1) -> bool:
+    public_key_point = params.point_from_str(public_key)
+    match from_der_format(sign):
+        case (int(r), int(s)), l if l == len(sign):
+            pass
+        case _:
+            raise ValueError('Incorrect signature')
 
-    inv_s = pow(s, -1, n)
-    u = (msg * inv_s) % n
-    v = (r * inv_s) % n
-    c_point = (g_point * u) + (public_key_point * v)
+    inv_s = pow(s, -1, params.n)
+    u = (msg * inv_s) % params.n
+    v = (r * inv_s) % params.n
+    c_point = (params.g_point * u) + (public_key_point * v)
     return c_point.x == r
