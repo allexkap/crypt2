@@ -66,64 +66,69 @@ class ecdsa_params:
     curve: Curve
     g_point: Point
     n: int
-    point_to_str: Callable[[Point], str]
-    point_from_str: Callable[[str], Point]
+    point_to_bytes: Callable[[Point], bytes]
+    point_from_bytes: Callable[[bytes], Point]
 
 
-def sec_point_to_str(point: Point, compressed=True) -> str:
-    prefix = ('03' if point.y % 2 else '02') if compressed else '04'
-    ypart = '' if compressed else f'{point.y:064x}'
-    xpart = f'{point.x:064x}'
-    return f'{prefix}{xpart}{ypart}'
+def sec_point_to_bytes(point: Point, compressed=True) -> bytes:
+    prefix = (0x03 if point.y % 2 else 0x02) if compressed else 0x04
+    data = [prefix.to_bytes(), point.x.to_bytes(32)]
+    if not compressed:
+        data.append(point.y.to_bytes(32))
+    return b''.join(data)
 
 
-def sec_point_from_str(text: str) -> Point:
+def sec_point_from_bytes(data: bytes) -> Point:
     curve = secp256k1.curve
-    prefix = text[:2]
-    x = int(text[2:66], 16)
-    if prefix == '04':
-        y = int(text[66:], 16)
-    elif prefix in ('02', '03'):
+    prefix = data[0]
+    x = int.from_bytes(data[1:33])
+    if prefix == 0x04:
+        y = int.from_bytes(data[1:33])
+    elif prefix in (0x02, 0x03):
         y = pow(x**3 + curve.a * x + curve.b, (curve.p + 1) // 4, curve.p)
-        if (y % 2) ^ (prefix != '02'):
+        if (y % 2) ^ (prefix != 0x02):
             y = curve.p - y
     else:
         raise ValueError
     return curve(x, y)
 
 
-def to_der_format(obj: Any) -> tuple[str, int]:
+def to_der_format(obj: Any) -> tuple[bytes, int]:
     match obj:
         case int(value):
-            prefix = '02'
+            prefix = 0x02
             size = -(-value.bit_length() // 8)
-            text = f'{value:0{size*2}x}'
+            data = value.to_bytes(size)
         case tuple(items):
-            prefix = '30'
-            text_parts, sizes = zip(*map(to_der_format, items))
-            size = sum(sizes)  # type: ignore
-            text = ''.join(text_parts)  # type: ignore
+            prefix = 0x30
+            if items:
+                data_parts, sizes = zip(*map(to_der_format, items))
+                size = sum(sizes)  # type: ignore
+                data = b''.join(data_parts)  # type: ignore
+            else:
+                size = 0
+                data = b''
         case obj:
             raise ValueError(f'Unknown type {obj.__class__}')
-    return f'{prefix}{size:02x}{text}', size + 2
+    return b''.join((prefix.to_bytes(), size.to_bytes(), data)), size + 2
 
 
-def parse_der_seq(text: str):
-    while text:
-        value, size = from_der_format(text)
-        text = text[size:]
+def parse_der_seq(data: bytes):
+    while data:
+        value, size = from_der_format(data)
+        data = data[size:]
         yield value
 
 
-def from_der_format(text: str) -> tuple[Any, int]:
-    size = (int(text[2:4], 16) + 2) * 2
-    match text[:2]:
-        case '02':  # INTEGER
-            value = int(text[4:size], 16)
-        case '30':  # SEQUENCE
-            value = tuple(parse_der_seq(text[4:size]))
+def from_der_format(data: bytes) -> tuple[Any, int]:
+    size = data[1] + 2
+    match data[0]:
+        case 0x02:  # INTEGER
+            value = int.from_bytes(data[2:size])
+        case 0x30:  # SEQUENCE
+            value = tuple(parse_der_seq(data[2:size]))
         case prefix:
-            raise ValueError(f'Unknown type 0x{prefix}')
+            raise ValueError(f'Unknown type 0x[{repr(prefix)}]')
     return value, size
 
 
@@ -138,27 +143,27 @@ secp256k1 = ecdsa_params(
         y=0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8,
     ),
     0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141,
-    sec_point_to_str,
-    sec_point_from_str,
+    sec_point_to_bytes,
+    sec_point_from_bytes,
 )
 
 
 def ecdsa_keygen(
     private_key: int | None = None,
     params: ecdsa_params = secp256k1,
-) -> tuple[int, str]:
+) -> tuple[int, bytes]:
     if private_key is None:
         private_key = secrets.randbelow(params.n - 1) + 1
     public_key = params.g_point * private_key
 
-    return private_key, params.point_to_str(public_key)
+    return private_key, params.point_to_bytes(public_key)
 
 
 def ecdsa_sign(
     msg: int,
     private_key: int,
     params: ecdsa_params = secp256k1,
-) -> str:
+) -> bytes:
     k = secrets.randbelow(params.n - 1) + 1
     r_point = params.g_point * k
     r = r_point.x % params.n
@@ -171,11 +176,11 @@ def ecdsa_sign(
 
 def ecdsa_verify(
     msg: int,
-    sign: str,
-    public_key: str,
+    sign: bytes,
+    public_key: bytes,
     params: ecdsa_params = secp256k1,
 ) -> bool:
-    public_key_point = params.point_from_str(public_key)
+    public_key_point = params.point_from_bytes(public_key)
     match from_der_format(sign):
         case (int(r), int(s)), l if l == len(sign):
             pass
