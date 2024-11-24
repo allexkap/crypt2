@@ -1,5 +1,6 @@
 import secrets
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable
 
 
 class Point:
@@ -60,39 +61,35 @@ class Curve:
         return f'Curve(a={self.a}, b={self.b}, p={self.p})'
 
 
-class secp256k1:
-    curve = Curve(
-        a=0x0000000000000000000000000000000000000000000000000000000000000000,
-        b=0x0000000000000000000000000000000000000000000000000000000000000007,
-        p=0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F,
-    )
-    g_point = curve(
-        x=0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
-        y=0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8,
-    )
-    n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+@dataclass
+class ecdsa_params:
+    curve: Curve
+    g_point: Point
+    n: int
+    point_to_str: Callable[[Point], str]
+    point_from_str: Callable[[str], Point]
 
-    @staticmethod
-    def point_to_str(point: Point, compressed=True) -> str:
-        prefix = ('03' if point.y % 2 else '02') if compressed else '04'
-        ypart = '' if compressed else f'{point.y:032x}'
-        xpart = f'{point.x:032x}'
-        return f'{prefix}{xpart}{ypart}'
 
-    @staticmethod
-    def point_from_str(text: str) -> Point:
-        curve = secp256k1.curve
-        prefix = text[:2]
-        x = int(text[2:66], 16)
-        if prefix == '04':
-            y = int(text[66:], 16)
-        elif prefix in ('02', '03'):
-            y = pow(x**3 + curve.a * x + curve.b, (curve.p + 1) // 4, curve.p)
-            if (y % 2) ^ (prefix != '02'):
-                y = curve.p - y
-        else:
-            raise ValueError
-        return curve(x, y)
+def sec_point_to_str(point: Point, compressed=True) -> str:
+    prefix = ('03' if point.y % 2 else '02') if compressed else '04'
+    ypart = '' if compressed else f'{point.y:064x}'
+    xpart = f'{point.x:064x}'
+    return f'{prefix}{xpart}{ypart}'
+
+
+def sec_point_from_str(text: str) -> Point:
+    curve = secp256k1.curve
+    prefix = text[:2]
+    x = int(text[2:66], 16)
+    if prefix == '04':
+        y = int(text[66:], 16)
+    elif prefix in ('02', '03'):
+        y = pow(x**3 + curve.a * x + curve.b, (curve.p + 1) // 4, curve.p)
+        if (y % 2) ^ (prefix != '02'):
+            y = curve.p - y
+    else:
+        raise ValueError
+    return curve(x, y)
 
 
 def to_der_format(obj: Any) -> tuple[str, int]:
@@ -130,7 +127,26 @@ def from_der_format(text: str) -> tuple[Any, int]:
     return value, size
 
 
-def ecdsa_keygen(private_key: int | None = None, params=secp256k1) -> tuple[int, str]:
+secp256k1 = ecdsa_params(
+    curve := Curve(
+        a=0x0000000000000000000000000000000000000000000000000000000000000000,
+        b=0x0000000000000000000000000000000000000000000000000000000000000007,
+        p=0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F,
+    ),
+    curve(
+        x=0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
+        y=0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8,
+    ),
+    0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141,
+    sec_point_to_str,
+    sec_point_from_str,
+)
+
+
+def ecdsa_keygen(
+    private_key: int | None = None,
+    params: ecdsa_params = secp256k1,
+) -> tuple[int, str]:
     if private_key is None:
         private_key = secrets.randbelow(params.n - 1) + 1
     public_key = params.g_point * private_key
@@ -138,7 +154,11 @@ def ecdsa_keygen(private_key: int | None = None, params=secp256k1) -> tuple[int,
     return private_key, params.point_to_str(public_key)
 
 
-def ecdsa_sign(msg: int, private_key: int, params=secp256k1) -> str:
+def ecdsa_sign(
+    msg: int,
+    private_key: int,
+    params: ecdsa_params = secp256k1,
+) -> str:
     k = secrets.randbelow(params.n - 1) + 1
     r_point = params.g_point * k
     r = r_point.x % params.n
@@ -149,7 +169,12 @@ def ecdsa_sign(msg: int, private_key: int, params=secp256k1) -> str:
     return to_der_format((r, s))[0]
 
 
-def ecdsa_verify(msg: int, sign: str, public_key: str, params=secp256k1) -> bool:
+def ecdsa_verify(
+    msg: int,
+    sign: str,
+    public_key: str,
+    params: ecdsa_params = secp256k1,
+) -> bool:
     public_key_point = params.point_from_str(public_key)
     match from_der_format(sign):
         case (int(r), int(s)), l if l == len(sign):
