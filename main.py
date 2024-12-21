@@ -1,9 +1,8 @@
-from hashlib import sha256
-
 from aes import aes
 from des import des
 from ecdsa import ecdsa_keygen, ecdsa_sign, ecdsa_verify
 from enigma import Enigma
+from sha3 import sha3_256
 
 text = open('lorem.txt').read().strip()
 print('Text:', repr(text))
@@ -33,12 +32,15 @@ dec_data = aes(enc_data, 0, True)
 assert src_data == dec_data
 print('\nAES:', enc_data.hex())
 
-text_hash = int.from_bytes(sha256(text.encode()).digest())
+text_hash_b = sha3_256(text.encode())
+print('\nSHA3 256:', text_hash_b.hex())
+
+text_hash = int.from_bytes(text_hash_b)
 private_key, public_key = ecdsa_keygen()
 signature = ecdsa_sign(text_hash, private_key)
 assert ecdsa_verify(text_hash, signature, public_key)
 print('\nECDSA:')
 print(f'{text_hash   = :064x}')
 print(f'{private_key = :064x}')
-print(f'public_key =  {public_key.hex()}')
-print(f'signature =   {signature.hex()}')
+print(f'public_key  = {public_key.hex()}')
+print(f'signature   = {signature.hex()}')

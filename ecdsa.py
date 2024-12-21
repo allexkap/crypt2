@@ -5,10 +5,15 @@ from typing import Any, Callable
 
 class Point:
     def __init__(self, x: int, y: int, curve: 'Curve') -> None:
-        self.x = x % curve.p
-        self.y = y % curve.p
+        self.x = x
+        self.y = y
         self.curve = curve
-        if (y**2) % curve.p != (x**3 + curve.a * x + curve.b) % curve.p:
+
+        if (
+            (y**2) % curve.p != (x**3 + curve.a * x + curve.b) % curve.p
+            or x >= curve.p
+            or y >= curve.p
+        ):
             raise ValueError('The point is not on the curve')
 
     def __neg__(self) -> 'Point':
@@ -26,8 +31,8 @@ class Point:
 
         p = self.curve.p
         slope = a % p * pow(b % p, -1, p) % p
-        x = slope**2 - self.x - rhs.x
-        y = slope * (self.x - x) - self.y
+        x = (slope**2 - self.x - rhs.x) % p
+        y = (slope * (self.x - x) - self.y) % p
         return self.curve(x, y)
 
     def __sub__(self, rhs: 'Point') -> 'Point':
@@ -48,17 +53,14 @@ class Point:
         return f'Point(x={self.x}, y={self.y}, curve={repr(self.curve)})'
 
 
+@dataclass
 class Curve:
-    def __init__(self, a: int, b: int, p: int) -> None:
-        self.a = a
-        self.b = b
-        self.p = p
+    a: int
+    b: int
+    p: int
 
     def __call__(self, x: int, y: int) -> Point:
         return Point(x, y, self)
-
-    def __repr__(self) -> str:
-        return f'Curve(a={self.a}, b={self.b}, p={self.p})'
 
 
 @dataclass
@@ -182,7 +184,7 @@ def ecdsa_verify(
 ) -> bool:
     public_key_point = params.point_from_bytes(public_key)
     match from_der_format(sign):
-        case (int(r), int(s)), l if l == len(sign):
+        case (int(r), int(s)), int(l) if l == len(sign):
             pass
         case _:
             raise ValueError('Incorrect signature')
